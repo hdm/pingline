@@ -31,7 +31,7 @@ def get_interface
     addr = NetworkInterface.addresses(intf)
     next unless addr[2] && addr[17]
     if addr[2].first['addr'] == default_address
-      return { 
+      return {
         'mac'  => addr[17].first['addr'],
         'name' => intf
       }.merge(addr[2].first)
@@ -63,7 +63,7 @@ def process_input(args)
   end
 
   @targets.uniq!
-  
+
   if @targets.length == 0
     print_error("No valid targets supplied")
     exit(1)
@@ -87,28 +87,28 @@ end
 
 def processing_loop
   loop do
-    data, header = @sock_raw.recvfrom(65535)
-    unless data
-      print_error("Sleeping...")
-      sleep(0.10)
-      next
-    end
-    packet = PacketFu::IPPacket.parse(data)
-    p [data, packet]
+  @cap.stream.each_packet do |rpkt|
+    packet = PacketFu::IPPacket.parse(rpkt.data)
     next unless (
-      packet.is_icmp?           &&
-      @state[packet.ip_saddr]   &&
-      packet.icmp_code == 0     && 
-      packet.icmp_type == 0     &&
-      packet.payload.length >=  4)
+      packet.is_icmp?      &&
+      packet.icmp_code == 0
+      [8,0].include?(packet.icmp_type) &&
+      ( @state[packet.ip_daddr] || @state[packet.ip_saddr] )
+    )
 
     pseq = packet.payload.unpack("N").first
-    
-    next unless @state[packet.ip_saddr][:sent][pseq]
-    next if @state[packet.ip_saddr][:recv][pseq]
- 
-    rtime = rpkt.time.to_f + (rpkt.microsec / 1_000_000.0)
-    @state[packet.ip_saddr][:recv][pseq] = rtime
+    next unless pseq
+
+    if packet.ip_saddr == @int['addr']
+      next if @state[packet.ip_daddr][:sent][pseq]
+      rtime = rpkt.time.to_f + (rpkt.microsec / 1_000_000.0)
+      @state[packet.ip_daddr][:sent][pseq] = rtime
+    else
+      next if @state[packet.ip_saddr][:recv][pseq]
+      rtime = rpkt.time.to_f + (rpkt.microsec / 1_000_000.0)
+      @state[packet.ip_saddr][:recv][pseq] = rtime
+    end
+  end
   end
 end
 
@@ -141,7 +141,7 @@ def sending_loop
   end
 end
 
-def send_probe(target) 
+def send_probe(target)
   dest = Socket.pack_sockaddr_in(0, target)
   pkt  = PacketFu::ICMPPacket.new
   pkt.ip_saddr  = @int['addr']
@@ -156,7 +156,7 @@ def send_probe(target)
   # TODO: BSD/OSX require bit flipping in the IP header to host order (!)
   raw = pkt.headers[1].to_s
 
-  @state[target][:sent][@seq] = Time.now.to_f
+  # @state[target][:sent][@seq] = Time.now.to_f
   @sock_raw.send(raw, 0, dest)
 end
 
@@ -182,14 +182,16 @@ def display_stats
   $stdout.flush
 
   @targets.sort{|a,b| Gem::Version.new(a) <=> Gem::Version.new(b) }.each do |t|
-    
+
     lost = thi = 0
     tlo = nil
     rtt_cur = rtt_cnt = rec_cnt = last_rtt = 0
-    
+
 
     tmin.upto(tseq) do |rseq|
       rec_cnt += 1
+
+      next if @state[t][:sent][rseq].nil?
 
       if @state[t][:recv][rseq].nil?
         last_rtt = nil
@@ -214,16 +216,30 @@ def display_stats
     $stdout.flush
   end
 
+  if @seq % 10 == 0
+    File.open("state.dmp", "w") do |fd|
+      fd.write(Marshal.dump(@state))
+    end
+  end
+
 end
 
-def configure_socket
-  # Use raw sockets to offload layer-2 stuff to the kernel
+def configure_sockets
   unless @sock_raw
     @sock_raw = Socket.open(Socket::PF_INET, Socket::SOCK_RAW, Socket::IPPROTO_ICMP)
     @sock_raw.setsockopt(Socket::IPPROTO_IP, Socket::IP_HDRINCL, 1)
     @sock_raw.setsockopt(Socket::SOL_SOCKET, Socket::SO_BROADCAST, true)
     @sock_raw.setsockopt(Socket::SOL_SOCKET, Socket::SO_SNDBUF, 1024*1024)
-    @sock_raw.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVBUF, 1024*1024*8)
+  end
+
+  unless @cap
+    @cap = PacketFu::Capture.new(
+      :iface   => @int['interface'],
+      :start   => true,
+      :filter  => "icmp and host #{@int['addr']}",
+      :snaplen => 65535,
+      :promisc => false
+    )
   end
 end
 
@@ -258,7 +274,7 @@ unless @int
   exit(1)
 end
 
-configure_socket
+configure_sockets
 
 processing_t = start_processing
 
