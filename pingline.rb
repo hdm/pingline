@@ -1,10 +1,12 @@
 #!/usr/bin/env ruby
 # -*- coding: binary -*-
 
+require 'bundler/setup'
 require 'socket'
+require 'ipaddr'
+
 require 'packetfu'
 require 'network_interface'
-require 'ipaddr'
 
 def get_root
   if RUBY_PLATFORM.index("linux") && Process.euid != 0
