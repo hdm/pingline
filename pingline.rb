@@ -32,7 +32,7 @@ def get_interface
     next if intf == "lo"
     addr = NetworkInterface.addresses(intf)
     next unless addr[2] && addr[17]
-    if addr[2].first['addr'] == default_address
+    if addr[2].first['addr'].to_s == default_address.to_s
       return {
         'mac'  => addr[17].first['addr'],
         'name' => intf
@@ -219,8 +219,10 @@ def display_stats
   end
 
   if @seq % 10 == 0
+    $stdout.puts "\n\nSaving state..."
+    data = Marshal.dump(@state)
     File.open("state.dmp", "w") do |fd|
-      fd.write(Marshal.dump(@state))
+      fd.write(data)
     end
   end
 
@@ -236,7 +238,7 @@ def configure_sockets
 
   unless @cap
     @cap = PacketFu::Capture.new(
-      :iface   => @int['interface'],
+      :iface   => @int['name'],
       :start   => true,
       :filter  => "icmp and host #{@int['addr']}",
       :snaplen => 65535,
