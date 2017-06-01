@@ -2,7 +2,11 @@
 
 The pingline tool monitors latency across a given network. This is useful for identifying mobile devices, embedded systems, and network anomalies.
 
+## Example
+
 ```
+$ ./pingline.rb 192.168.0.0/24
+
 ADDRESS    	RTT	AVG	LOW	HIGH	%LOSS	LOST
 192.168.0.1	0	0	0	0	%0	0/101
 192.168.0.20	0	0	0	2	%0	0/101
